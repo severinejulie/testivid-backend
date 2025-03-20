@@ -3,7 +3,7 @@ const supabase = require("../config/supabase");
 const router = express.Router();
 
 router.post("/signup", async (req, res) => {
-  const { firstname, lastname, email, password, companyName, fromGoogle } = req.body;
+  const { firstname, lastname, email, password, companyName, fromGoogle, accessToken } = req.body;
 
   try {
     // If it's a Google sign-up, forward to the dedicated handler
@@ -39,17 +39,21 @@ router.post("/signup", async (req, res) => {
         firstname: firstname,
         lastname: lastname,
         password_hash: "", // Supabase Auth handles passwords securely
-        company_id: companyData.id, // Link user to the company
-        auth_provider: "email"
+        company_id: companyData.id
       }
     ]);
 
     if (userError) {
       return res.status(400).json({ error: "Failed to create user: " + userError.message });
     }
+    let message = "Signup successful! Check your email for confirmation.";
 
+    if(fromGoogle) {
+      message = "";
+    }
+    
     res.json({
-      message: "Signup successful! Check your email for confirmation.",
+      message: message,
       user: authData.user,
       company: companyData,
     });
@@ -62,10 +66,14 @@ router.post("/signup", async (req, res) => {
 
 // Helper function to handle Google sign-ups
 async function signupGoogleHandler(req, res) {
-  const { firstname, lastname, email, companyName } = req.body;
+  const { firstname, lastname, email, companyName, accessToken  } = req.body;
+
+  if (!accessToken) {
+    return res.status(400).json({ error: "Access token is required for Google signup" });
+  }
 
   // Get the current authenticated user
-  const { data: authData, error: authError } = await supabase.auth.getUser();
+  const { data: authData, error: authError } = await supabase.auth.getUser(accessToken);
 
   if (authError || !authData.user) {
     return res.status(401).json({ error: "Not authenticated or session expired" });
@@ -163,7 +171,11 @@ router.post("/signout", async (req, res) => {
 router.post("/signin-google", async (req, res) => {
   const { provider } = req.body;
 
-  const { data, error } = await supabase.auth.signInWithOAuth({ provider });
+  const { data, error } = await supabase.auth.signInWithOAuth({ 
+    provider,
+    options: {
+      redirectTo: 'http://localhost:3000/auth/callback'
+    } });
 
   if (error) return res.status(400).json({ error: error.message });
 
@@ -272,17 +284,20 @@ router.post("/signup-google", async (req, res) => {
 });
 
 router.post("/process-auth-callback", async (req, res) => {
-  const { hashParams, authAction } = req.body;
-  
+  const { hashParams, authAction, accessToken } = req.body;
   try {
-    // Use Supabase to get the current session/user
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-    
-    if (sessionError || !sessionData.session) {
-      return res.status(401).json({ error: "Authentication failed" });
+    if (!accessToken) {
+      return res.status(400).json({ error: "No access token provided" });
     }
     
-    const user = sessionData.session.user;
+    // Get user from the provided token
+    const { data, error } = await supabase.auth.getUser(accessToken);
+
+    if (error) {
+      return res.status(401).json({ error: "Invalid token" });
+    }
+    
+    const user = data.user;
     const { user_metadata } = user;
     
     // Get user details if they exist in your database
@@ -300,10 +315,9 @@ router.post("/process-auth-callback", async (req, res) => {
         firstname: user_metadata?.name?.split(' ')[0] || '',
         lastname: user_metadata?.name?.split(' ').slice(1).join(' ') || '',
         avatar_url: user_metadata?.picture || '',
-        // Include any other user data from your database if available
         ...(userData || {})
       },
-      token: sessionData.session.access_token
+      token: accessToken 
     };
     
     res.json(responseData);
