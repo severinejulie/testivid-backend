@@ -174,8 +174,12 @@ router.post("/signin-google", async (req, res) => {
   const { data, error } = await supabase.auth.signInWithOAuth({ 
     provider,
     options: {
-      redirectTo: 'http://localhost:3000/auth/callback'
-    } });
+      redirectTo: 'http://localhost:3000/auth/callback',
+      queryParams: {
+        prompt: 'select_account'  // This forces Google to show the account selection screen
+      }
+    }
+  });
 
   if (error) return res.status(400).json({ error: error.message });
 
