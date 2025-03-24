@@ -190,15 +190,30 @@ router.post("/forgot-password", async (req, res) => {
   const { email } = req.body;
 
   try {
-    const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${process.env.FRONTEND_URL}/reset-password`, // Ensure this is set correctly
-    });
+    const { data: userData, error: userError } = await supabase
+      .from('user')
+      .select('*')
+      .eq('email', email)
+      .single();
 
-    if (error) {
-      return res.status(400).json({ error: "Failed to send reset email: " + error.message });
-    }
+      if (userData && userData.auth_provider === "google") {
+        res.json({ message: "You signed up with Google, you cannot update password" });
+      } else {
 
-    res.json({ message: "Password reset email sent. Check your inbox!" });
+        if (userError) {
+          return res.status(400).json({ error: "Failed to send reset email: " + error.message });
+        }
+
+        const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${process.env.FRONTEND_URL}/reset-password`, // Ensure this is set correctly
+        });
+
+        if (error) {
+          return res.status(400).json({ error: "Failed to send reset email: " + error.message });
+        }
+
+        res.json({ message: "Password reset email sent. Check your inbox!" });
+      }
 
   } catch (err) {
     console.error("Forgot Password Error:", err);
@@ -287,47 +302,64 @@ router.post("/signup-google", async (req, res) => {
   }
 });
 
+// This would be in your backend API route for '/api/auth/process-auth-callback'
 router.post("/process-auth-callback", async (req, res) => {
-  const { hashParams, authAction, accessToken } = req.body;
+  const { accessToken, authAction } = req.body;
+  
   try {
-    if (!accessToken) {
-      return res.status(400).json({ error: "No access token provided" });
+    // Get user info from Supabase auth
+    const { data: authData, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError) {
+      return res.status(400).json({ error: authError.message });
     }
     
-    // Get user from the provided token
-    const { data, error } = await supabase.auth.getUser(accessToken);
-
-    if (error) {
-      return res.status(401).json({ error: "Invalid token" });
-    }
-    
-    const user = data.user;
-    const { user_metadata } = user;
-    
-    // Get user details if they exist in your database
+    const supabaseUser = authData.user;
+    // Check if user exists in your users table
     const { data: userData, error: userError } = await supabase
       .from('user')
       .select('*')
-      .eq('id', user.id)
+      .eq('email', supabaseUser.email)
       .single();
+      
+    // Determine if this is a new user
+    const isNewUser = !userData || userError;
     
-    // Prepare response with user data
-    const responseData = {
-      user: {
-        id: user.id,
-        email: user.email,
-        firstname: user_metadata?.name?.split(' ')[0] || '',
-        lastname: user_metadata?.name?.split(' ').slice(1).join(' ') || '',
-        avatar_url: user_metadata?.picture || '',
-        ...(userData || {})
-      },
-      token: accessToken 
-    };
-    
-    res.json(responseData);
-  } catch (error) {
-    console.error("Auth callback processing error:", error);
-    res.status(500).json({ error: "Failed to process authentication" });
+    if (isNewUser) {
+      // This is a new user (or user not found)
+      // You might want to create a minimal record just to have something
+      // but mark it as incomplete so the user is prompted to complete signup
+      
+      // For example:
+      if (authAction === 'signin') {
+        console.log('User tried to sign in but needs to complete registration first');
+      }
+      
+      // Return minimal user data and flag this as a new user
+      return res.json({
+        isNewUser: true,
+        user: {
+          id: null, // Will be created during signup
+          auth_id: supabaseUser.id,
+          email: supabaseUser.email,
+          firstname: supabaseUser.user_metadata?.full_name?.split(' ')[0] || '',
+          lastname: supabaseUser.user_metadata?.full_name?.split(' ').slice(1).join(' ') || '',
+          avatar_url: supabaseUser.user_metadata?.avatar_url || null,
+          // Add other fields as needed
+        },
+        token: accessToken
+      });
+    } else {
+      // Existing user - return full user data
+      return res.json({
+        isNewUser: false,
+        user: userData,
+        token: accessToken
+      });
+    }
+  } catch (err) {
+    console.error('Error processing auth callback:', err);
+    return res.status(500).json({ error: 'Failed to process authentication' });
   }
 });
 
