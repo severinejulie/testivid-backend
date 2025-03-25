@@ -13,6 +13,7 @@ app.use(morgan("dev"));
 // Routes
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/testimonials", require("./routes/testimonials"));
+app.use("/api/questions", require("./routes/question"));
 
 // Start server
 const PORT = process.env.PORT || 5000;
