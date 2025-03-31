@@ -1,16 +1,48 @@
-const supabase = require("../config/supabase");
+// middleware/auth.js
+const supabase = require('../config/supabase');
 
-const authMiddleware = async (req, res, next) => {
-  const token = req.headers.authorization?.split(" ")[1];
-
-  if (!token) return res.status(401).json({ error: "Unauthorized" });
-
-  const { data, error } = await supabase.auth.getUser(token);
-
-  if (error || !data.user) return res.status(401).json({ error: "Invalid token" });
-
-  req.user = data.user;
-  next();
+/**
+ * Authentication middleware for protected routes
+ * Validates the JWT token from the Authorization header
+ */
+const auth = async (req, res, next) => {
+  try {
+    // Get token from header
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized - No token provided' });
+    }
+    
+    const token = authHeader.split(' ')[1];
+    
+    // Verify token with Supabase
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    
+    if (error || !user) {
+      return res.status(401).json({ error: 'Unauthorized - Invalid token' });
+    }
+ 
+    // Get user details from your users table
+    const { data: userData, error: userError } = await supabase
+      .from('user')
+      .select('*, company_id')
+      .eq('id', user.id)
+      .single();
+    
+    if (userError || !userData) {
+      return res.status(401).json({ error: 'Unauthorized - User not found' });
+    }
+    
+    // Add user data to request object
+    req.user = userData;
+    
+    // Continue to the protected route
+    next();
+  } catch (error) {
+    console.error('Auth middleware error:', error);
+    res.status(500).json({ error: 'Authentication error' });
+  }
 };
 
-module.exports = authMiddleware;
+module.exports = auth;
