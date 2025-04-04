@@ -151,9 +151,8 @@ router.get('/requests', auth, async (req, res) => {
   try {
     const company_id = req.user.company_id;
     
-    const { status, limit = 20, page = 1 } = req.query;
-    const offset = (page - 1) * limit;
-    
+    const { status } = req.query;
+
     let query = supabase
       .from('testimonial')
       .select(`
@@ -161,8 +160,7 @@ router.get('/requests', auth, async (req, res) => {
         email_history(*)
       `)
       .eq('company_id', company_id)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+      .order('created_at', { ascending: false }); // no range/limit anymore
     
     if (status) {
       query = query.eq('status', status);
@@ -182,6 +180,7 @@ router.get('/requests', auth, async (req, res) => {
     return res.status(500).json({ error: 'Server error' });
   }
 });
+
 
 
 /**
@@ -354,6 +353,7 @@ router.post('/request/:id/cancel', auth, async (req, res) => {
  * POST /api/testimonials/submit/:token
  * (No auth middleware as this is accessed by customers)
  */
+
 router.post('/submit/:token', async (req, res) => {
   try {
     const { token } = req.params;

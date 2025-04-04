@@ -41,7 +41,7 @@ const sendTestTestimonialRequest = async (options) => {
     `;
 
     const info = await transporter.sendMail({
-      from: `"${options.companyName}" <severinejulie@gmail.com>`,
+      from: `"Testivid" <severinejulie@gmail.com>`,
       to: options.to,
       subject: options.subject || `${options.companyName} would like your feedback`,
       html: htmlContent,
