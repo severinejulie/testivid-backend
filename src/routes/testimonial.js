@@ -415,49 +415,54 @@ router.post('/:id/merge', auth, async (req, res) => {
 
         try {
           const videoUrlPath = new URL(response.video_url).pathname;
-          console.log(videoUrlPath)
+          console.log(videoUrlPath);
           // Remove the prefix
           const pathWithoutPrefix = videoUrlPath.replace('/storage/v1/object/public/videos/', '');
-
+        
           console.log(`Attempting download from storage path: ${pathWithoutPrefix}`);
-
+        
           const { data: fileData, error: downloadError } = await supabase
             .storage
             .from('videos')  // ✅ make sure it's the correct bucket name
             .download(pathWithoutPrefix);
-
+        
           if (downloadError || !fileData) {
             console.error(`Failed to download video ${pathWithoutPrefix}:`, downloadError || 'File not found');
             continue;  // Skip if failed
           }
-
+        
           console.log(`Successfully downloaded video file: ${pathWithoutPrefix}`);
-
+        
           // Save to local filesystem
           const originalPath = path.join(uploadDir, path.basename(pathWithoutPrefix));
           fs.writeFileSync(originalPath, Buffer.from(await fileData.arrayBuffer()));
-
+        
+          // Standard frame size for all videos
+          const frameWidth = 1280;
+          const frameHeight = 720;
+        
           const mp4Path = originalPath.replace(/\.webm$/, '.mp4');
-          console.log(`Converting ${originalPath} to ${mp4Path}`);
+          console.log(`Converting ${originalPath} to ${mp4Path} with correct aspect ratio`);
           
-          const ffmpegCommandConvert = `ffmpeg -y -i "${originalPath}" -c:v libx264 -preset ultrafast -c:a aac -b:a 128k -ac 2 -ar 44100 "${mp4Path}"`;
+          // Preserve aspect ratio with padding (letterbox/pillarbox)
+          const ffmpegCommandConvert = `ffmpeg -y -i "${originalPath}" -c:v libx264 -preset ultrafast -c:a aac -b:a 128k -ac 2 -ar 44100 \
+                -vf "scale='if(gt(a,16/9),1280,-2)':'if(gt(a,16/9),-2,720)',pad=1280:720:(ow-iw)/2:(oh-ih)/2" "${mp4Path}"`;
           await execPromise(ffmpegCommandConvert);
-          console.log(`Successfully converted video to MP4 format`);
+          console.log(`Successfully converted video to MP4 format with preserved aspect ratio`);
           
-          // Delete original WebM file
+          // Delete original file
           fs.unlinkSync(originalPath);
-
+        
           downloadedVideos.push({
             path: mp4Path,  // Use the MP4 file path
             questionId: response.question_id,
             questionText: response.question.text
           });
-
+        
         } catch (error) {
           console.error(`Error processing video from URL ${response.video_url}:`, error);
         }
       }
-
 
     if (downloadedVideos.length === 0) {
       return res.status(400).json({ error: 'Failed to download any videos for processing' });
@@ -678,35 +683,43 @@ router.post('/response/:id/generate-intro', auth, async (req, res) => {
 
       console.log(`Successfully downloaded video file: ${pathWithoutPrefix}`);
 
-      // Save to local filesystem
       const originalPath = path.join(uploadDir, path.basename(pathWithoutPrefix));
       fs.writeFileSync(originalPath, Buffer.from(await fileData.arrayBuffer()));
 
+      // Standard frame size for intro/title cards
+      const frameWidth = 1280;
+      const frameHeight = 720;
+
+      // Prepare the output path
       const mp4Path = originalPath.replace(/\.webm$/, '.mp4');
-      console.log(`Converting ${originalPath} to ${mp4Path}`);
-      
-      // If it's already an MP4, just use the original path
-      let videoPath = originalPath;
-      
-      // Convert if it's a webm file
+      console.log(`Converting ${originalPath} to ${mp4Path} with correct aspect ratio`);
+
+      // Preserve aspect ratio with padding (letterbox/pillarbox)
+      const ffmpegCommandConvert = `ffmpeg -y -i "${originalPath}" \
+      -c:v libx264 -preset ultrafast \
+      -c:a aac -b:a 128k -ac 2 -ar 44100 \
+      -vf "scale='if(gt(a,${frameWidth}/${frameHeight}),${frameWidth},-2)':'if(gt(a,${frameWidth}/${frameHeight}),-2,${frameHeight})',pad=${frameWidth}:${frameHeight}:(ow-iw)/2:(oh-ih)/2" \
+      "${mp4Path}"`;
+
+      await execPromise(ffmpegCommandConvert);
+      console.log(`Successfully converted video to MP4 format with preserved aspect ratio`);
+
+      // Delete original file if it was webm
       if (originalPath.endsWith('.webm')) {
-        const ffmpegCommandConvert = `ffmpeg -y -i "${originalPath}" -c:v libx264 -preset ultrafast -c:a aac -b:a 128k -ac 2 -ar 44100 "${mp4Path}"`;
-        await execPromise(ffmpegCommandConvert);
-        console.log(`Successfully converted video to MP4 format`);
-        
-        // Delete original WebM file
         fs.unlinkSync(originalPath);
-        videoPath = mp4Path;
       }
+
+      // Use the converted mp4 path
+      const videoPath = mp4Path;
 
       // 4. Generate question intro video
       const questionText = response.question.text;
       const questionPath = path.join(uploadDir, `question_${response.question_id}_${Date.now()}.mp4`);
-      
+
       console.log(`Creating question intro with text: "${questionText}"`);
-      
+
       const ffmpegCommandQuestion = `ffmpeg -y \
-        -f lavfi -i color=c=black:s=1280x720:d=3 \
+        -f lavfi -i color=c=black:s=${frameWidth}x${frameHeight}:d=3 \
         -f lavfi -t 3 -i anullsrc=channel_layout=stereo:sample_rate=44100 \
         -filter_complex "drawtext=text='${questionText}':fontcolor=white:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2, \
         trim=duration=3,setpts=PTS-STARTPTS[v]; \
