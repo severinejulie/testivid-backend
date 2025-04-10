@@ -22,11 +22,12 @@ router.post('/request', auth, async (req, res) => {
     const {
       customer_email,
       customer_name,
+      customer_position,
       question_ids,
       expires_days = 30
     } = req.body;
 
-    if (!customer_email || !customer_name || !question_ids || !question_ids.length) {
+    if (!customer_email || !customer_name || !question_ids || !question_ids.length || !customer_position) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -45,6 +46,8 @@ router.post('/request', auth, async (req, res) => {
       .insert({
         company_id,
         customer_email,
+        customer_name,
+        customer_position,
         status: 'pending',
         access_token,
         created_at: new Date().toISOString(),

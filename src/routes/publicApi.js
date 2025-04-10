@@ -31,6 +31,8 @@ router.get('/testimonial/validate/:token', async (req, res) => {
         id,
         status,
         expires_at,
+        customer_name,
+        customer_position,
         company:company_id(id, name, logo_url)
       `)
       .eq('access_token', token)
@@ -80,7 +82,9 @@ router.get('/testimonial/validate/:token', async (req, res) => {
       testimonial: {
         id: testimonial.id,
         company: testimonial.company,
-        expiresAt: testimonial.expires_at
+        expiresAt: testimonial.expires_at,
+        customer_name: testimonial.customer_name,
+        customer_position: testimonial.customer_position
       },
       questions
     });
@@ -208,7 +212,7 @@ router.post("/testimonial/save", upload.array("videos"), async (req, res) => {
     // Fetch related testimonial_responses
     const { data: responses, error: responsesError } = await supabase
       .from("testimonial_responses")
-      .select("id, question_id")
+      .select("id, question_id, question:question_id (text)")
       .eq("testimonial_id", testimonial.id);
 
     if (responsesError || !responses || responses.length === 0) {
@@ -228,6 +232,7 @@ router.post("/testimonial/save", upload.array("videos"), async (req, res) => {
     }
 
     const publicUrls = [];
+    const uploadedVideos = [];
 
     // For each uploaded video, find the matching testimonial_response by question_id
     for (let i = 0; i < req.files.length; i++) {
@@ -276,6 +281,11 @@ router.post("/testimonial/save", upload.array("videos"), async (req, res) => {
         console.error("Update response error:", updateError);
         return res.status(500).json({ error: "Failed to update testimonial response" });
       }
+
+      uploadedVideos.push({
+        question: matchingResponse.question.text || "Unknown Question",
+        url: publicUrl
+      });
     }
 
     const { error: updateTestimonialError } = await supabase
@@ -290,7 +300,7 @@ router.post("/testimonial/save", upload.array("videos"), async (req, res) => {
 
     return res.status(200).json({
       message: "Videos uploaded and mapped to correct questions successfully",
-      videoUrls: publicUrls
+      videos: uploadedVideos
     });
 
   } catch (error) {
