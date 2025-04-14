@@ -27,7 +27,7 @@ router.post('/request', auth, async (req, res) => {
       expires_days = 30
     } = req.body;
 
-    if (!customer_email || !customer_name || !question_ids || !question_ids.length || !customer_position) {
+    if (!customer_email || !customer_name || !question_ids || !question_ids.length) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 

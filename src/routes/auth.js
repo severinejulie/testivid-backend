@@ -1,6 +1,7 @@
 const express = require("express");
 const supabase = require("../config/supabase");
 const router = express.Router();
+const { getFriendlySupabaseError } = require("../utils/supabaseErrorHandler");
 
 router.post("/signup", async (req, res) => {
   const { firstname, lastname, email, password, companyName, fromGoogle, accessToken } = req.body;
@@ -14,10 +15,21 @@ router.post("/signup", async (req, res) => {
 
     // Regular email/password signup flow
     // Step 1: Sign up the user with Supabase Auth
-    const { data: authData, error: authError } = await supabase.auth.signUp({ email, password });
+    const successMessage = encodeURIComponent("You successfully verified your email. You can now log in.");
+
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: process.env.FRONTEND_URL 
+          ? `${process.env.FRONTEND_URL}/signin?message=${successMessage}`
+          : `http://localhost:3000/signin?message=${successMessage}`
+      }
+    });
 
     if (authError) {
-      return res.status(400).json({ error: authError.message });
+      const friendlyMessage = getFriendlySupabaseError(authError);
+      return res.status(400).json({ error: friendlyMessage });
     }
 
     // Step 2: Create a new company record
@@ -28,7 +40,8 @@ router.post("/signup", async (req, res) => {
       .single();
 
     if (companyError) {
-      return res.status(400).json({ error: "Failed to create company: " + companyError.message });
+      const friendlyMessage = getFriendlySupabaseError(companyError);
+      return res.status(400).json({ error: "Failed to create company: " + friendlyMessage });
     }
 
     // Step 3: Create a new user record in the database with the company_id
@@ -44,7 +57,8 @@ router.post("/signup", async (req, res) => {
     ]);
 
     if (userError) {
-      return res.status(400).json({ error: "Failed to create user: " + userError.message });
+      const friendlyMessage = getFriendlySupabaseError(userError);
+      return res.status(400).json({ error: "Failed to create user: " + friendlyMessage });
     }
     let message = "Signup successful! Check your email for confirmation.";
 
@@ -88,7 +102,8 @@ async function signupGoogleHandler(req, res) {
       .single();
 
     if (companyError) {
-      return res.status(400).json({ error: "Failed to create company: " + companyError.message });
+      const friendlyMessage = getFriendlySupabaseError(companyError);
+      return res.status(400).json({ error: "Failed to create company: " + friendlyMessage });
     }
 
     // Create a new user record in the database with the company_id
@@ -105,7 +120,8 @@ async function signupGoogleHandler(req, res) {
     ]);
 
     if (userError) {
-      return res.status(400).json({ error: "Failed to create user: " + userError.message });
+      const friendlyMessage = getFriendlySupabaseError(userError);
+      return res.status(400).json({ error: "Failed to create user: " + friendlyMessage });
     }
 
     res.json({
@@ -126,11 +142,11 @@ router.post("/signin", async (req, res) => {
   const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password });
 
   if (authError) {
-    // Check for common authentication errors
     if (authError.message.includes("Invalid login credentials")) {
       return res.status(400).json({ error: "Incorrect email or password." });
     }
-    return res.status(400).json({ error: authError.message });
+    const friendlyMessage = getFriendlySupabaseError(authError);
+    return res.status(400).json({ error: friendlyMessage });
   }
 
   // Step 2: Check if user is verified
@@ -148,7 +164,11 @@ router.post("/signin", async (req, res) => {
     .eq("email", email)
     .single();
 
-  if (userError) return res.status(400).json({ error: "User not found: " + userError.message });
+  if (userError) {
+    const friendlyMessage = getFriendlySupabaseError(userError);
+    return res.status(400).json({ error: "User not found: " + friendlyMessage });
+  }
+    
 
   // Step 5: Return the token and user data
   res.json({
@@ -176,7 +196,7 @@ router.post("/signin-google", async (req, res) => {
     options: {
       redirectTo: 'http://localhost:3000/auth/callback',
       queryParams: {
-        prompt: 'select_account'  // This forces Google to show the account selection screen
+        prompt: 'select_account'  
       }
     }
   });
@@ -201,15 +221,17 @@ router.post("/forgot-password", async (req, res) => {
       } else {
 
         if (userError) {
-          return res.status(400).json({ error: "Failed to send reset email: " + error.message });
+          const friendlyMessage = getFriendlySupabaseError(userError);
+          return res.status(400).json({ error: "Failed to send reset email: " + friendlyMessage });
         }
 
         const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${process.env.FRONTEND_URL}/reset-password`, // Ensure this is set correctly
+          redirectTo: `${process.env.FRONTEND_URL}/reset-password`,
         });
 
         if (error) {
-          return res.status(400).json({ error: "Failed to send reset email: " + error.message });
+          const friendlyMessage = getFriendlySupabaseError(error);
+          return res.status(400).json({ error: "Failed to send reset email: " + friendlyMessage });
         }
 
         res.json({ message: "Password reset email sent. Check your inbox!" });
@@ -231,7 +253,8 @@ router.post("/reset-password", async (req, res) => {
     });
 
     if (sessionError) {
-      return res.status(400).json({ error: "Failed to authenticate reset session: " + sessionError.message });
+      const friendlyMessage = getFriendlySupabaseError(sessionError);
+      return res.status(400).json({ error: "Failed to authenticate reset session: " + friendlyMessage });
     }
 
     const { data, error } = await supabase.auth.updateUser({
@@ -239,7 +262,8 @@ router.post("/reset-password", async (req, res) => {
     });
 
     if (error) {
-      return res.status(400).json({ error: "Failed to reset password: " + error.message });
+      const friendlyMessage = getFriendlySupabaseError(error);
+      return res.status(400).json({ error: "Failed to reset password: " + friendlyMessage });
     }
 
     res.json({ message: "Password has been reset successfully. You can now log in." });
@@ -270,7 +294,8 @@ router.post("/signup-google", async (req, res) => {
       .single();
 
     if (companyError) {
-      return res.status(400).json({ error: "Failed to create company: " + companyError.message });
+      const friendlyMessage = getFriendlySupabaseError(companyError);
+      return res.status(400).json({ error: "Failed to create company: " + friendlyMessage });
     }
 
     // Step 2: Create a new user record in the database with the company_id
@@ -287,7 +312,8 @@ router.post("/signup-google", async (req, res) => {
     ]);
 
     if (userError) {
-      return res.status(400).json({ error: "Failed to create user: " + userError.message });
+      const friendlyMessage = getFriendlySupabaseError(userError);
+      return res.status(400).json({ error: "Failed to create user: " + friendlyMessage });
     }
 
     res.json({
@@ -311,7 +337,8 @@ router.post("/process-auth-callback", async (req, res) => {
     const { data: authData, error: authError } = await supabase.auth.getUser(accessToken);
     
     if (authError) {
-      return res.status(400).json({ error: authError.message });
+      const friendlyMessage = getFriendlySupabaseError(authError);
+      return res.status(400).json({ error: friendlyMessage });
     }
     
     const supabaseUser = authData.user;

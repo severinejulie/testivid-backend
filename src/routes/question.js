@@ -1,12 +1,13 @@
 const express = require("express");
 const supabase = require("../config/supabase");
 const router = express.Router();
+const { getFriendlySupabaseError } = require("../utils/supabaseErrorHandler");
 
 router.get("/list", async (req, res) => {
     const { company_id } = req.query;
 
     if (!company_id) {
-        return res.status(400).json({ error: "Missing company_id" });
+        return res.status(400).json({ error: "Missing Company Id" });
     }
 
     try {
@@ -16,7 +17,8 @@ router.get("/list", async (req, res) => {
         .eq("company_id", company_id);
 
         if (questionError) {
-            return res.status(400).json({ error: "Question not found: " + questionError.message });
+          const friendlyMessage = getFriendlySupabaseError(questionError);
+          return res.status(400).json({ error: "Question not found: " + friendlyMessage });
         }
 
         if (questionList && questionList.length > 0) {
@@ -36,7 +38,7 @@ router.post("/add", async (req, res) => {
     const { company_id, text } = req.body;
 
     if (!company_id) {
-        return res.status(400).json({ error: "Missing company_id" });
+        return res.status(400).json({ error: "Missing company Id" });
     }
 
     try {
@@ -47,7 +49,8 @@ router.post("/add", async (req, res) => {
         .single();
 
         if (questionError) {
-            return res.status(400).json({ error: "Failed to add question: " + questionError.message });
+          const friendlyMessage = getFriendlySupabaseError(questionError);
+          return res.status(400).json({ error: "Failed to add question: " + friendlyMessage });
         }
 
         res.json(questionData);
@@ -74,7 +77,8 @@ router.post("/edit", async (req, res) => {
         .single();
   
       if (updateError) {
-        return res.status(400).json({ error: "Failed to update question: " + updateError.message });
+        const friendlyMessage = getFriendlySupabaseError(updateError);
+        return res.status(400).json({ error: "Failed to update question: " + friendlyMessage });
       }
   
       res.json(updatedQuestion);
@@ -101,7 +105,8 @@ router.post("/delete", async (req, res) => {
         .single();
   
       if (deleteError) {
-        return res.status(400).json({ error: "Failed to delete question: " + deleteError.message });
+        const friendlyMessage = getFriendlySupabaseError(deleteError);
+        return res.status(400).json({ error: "Failed to delete question: " + friendlyMessage });
       }
   
       res.json({ message: "Question deleted", deletedQuestion });
