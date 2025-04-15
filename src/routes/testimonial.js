@@ -66,7 +66,9 @@ router.post('/request', auth, async (req, res) => {
     const { data: questions, error: questionsError } = await supabase
       .from('question')
       .select('id, text')
-      .in('id', question_ids);
+      .in('id', question_ids)
+      .order('order_position', { ascending: true })
+      .order('created_at', { ascending: true });
 
     if (questionsError) {
       console.error('Error fetching questions:', questionsError);
@@ -170,7 +172,7 @@ router.get('/requests', auth, async (req, res) => {
         email_history(*)
       `)
       .eq('company_id', company_id)
-      .order('created_at', { ascending: false }); // no range/limit anymore
+      .order('created_at', { ascending: false }); 
     
     if (status) {
       query = query.eq('status', status);
@@ -214,13 +216,17 @@ router.get('/request/:id', auth, async (req, res) => {
       `)
       .eq('id', id)
       .eq('company_id', company_id)
-      .order('created_at', { ascending: true, foreignTable: 'testimonial_responses' })
       .single();
+
     
     if (error) {
       console.error('Error fetching testimonial:', error);
       return res.status(404).json({ error: 'Testimonial not found' });
     }
+
+    testimonial.testimonial_responses.sort((a, b) => {
+      return a.question?.order_position - b.question?.order_position;
+    });
     
     return res.json(testimonial);
   } catch (error) {

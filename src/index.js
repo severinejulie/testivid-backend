@@ -17,6 +17,8 @@ app.use("/api/testimonials", require("./routes/testimonial"));
 app.use("/api/questions", require("./routes/question"));
 app.use("/api/public", require("./routes/publicApi"));
 
+console.log('Supabase Key in use:', process.env.SUPABASE_SERVICE_ROLE_KEY);
+
 // app.post('/api/testimonials/webhook/mailgun', (req, res, next) => {
 //     // In production, verify Mailgun webhook signature here
 //     // See: https://documentation.mailgun.com/en/latest/user_manual.html#webhooks

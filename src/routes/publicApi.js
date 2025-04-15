@@ -258,7 +258,18 @@ router.post("/testimonial/save", upload.array("videos"), async (req, res) => {
         });
 
       if (uploadError) {
-        console.error("Upload error:", uploadError);
+        console.log(process.env.SUPABASE_SERVICE_ROLE_KEY);
+        console.error("Upload error:", JSON.stringify({
+          error: uploadError,
+          file: {
+            size: file.buffer.length,
+            type: file.mimetype,
+            path: filePath
+          },
+          time: new Date().toISOString(),
+          testimonialId: testimonial.id,
+          responseId: matchingResponse.id
+        }, null, 2));
         return res.status(500).json({ error: "Failed to upload video" });
       }
 
