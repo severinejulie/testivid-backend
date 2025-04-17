@@ -445,7 +445,6 @@ router.post('/:id/merge', auth, async (req, res) => {
       .from('testimonial_responses')
       .select(`id, video_url, question_id, question:question_id (id, text)`)
       .eq('testimonial_id', id)
-      .not('video_url', 'is', null);
 
     if (responsesError) {
       console.error('Error fetching testimonial responses:', responsesError);
@@ -765,7 +764,7 @@ router.post('/response/:id/generate-intro', auth, async (req, res) => {
       const { error: updateError } = await supabase
         .from('testimonial_responses')
         .update({
-          video_url: videoWithIntroUrl,
+          intro_video_url: videoWithIntroUrl,
           intro_generated: true,
           updated_at: new Date().toISOString()
         })

@@ -1,0 +1,1 @@
+ALTER TABLE testimonial_responses ADD COLUMN intro_video_url TEXT DEFAULT NULL;
