@@ -193,6 +193,37 @@ router.get('/requests', auth, async (req, res) => {
   }
 });
 
+router.get('/stats', auth, async (req, res) => {
+  try {
+    const company_id = req.user.company_id;
+
+    const [userRes, questionRes, testimonialRes, pendingTestimonial, completedRes] = await Promise.all([
+      supabase.from('user').select('*', { count: 'exact' }).eq('company_id', company_id),
+      supabase.from('question').select('*', { count: 'exact' }).eq('company_id', company_id),
+      supabase.from('testimonial').select('*', { count: 'exact' }).eq('company_id', company_id),
+      supabase.from('testimonial').select('*', { count: 'exact' }).eq('company_id', company_id).eq('status', 'pending'),
+      supabase.from('testimonial').select('*', { count: 'exact' }).eq('company_id', company_id).eq('status', 'completed'),
+    ]);
+
+    if (userRes.error || questionRes.error || testimonialRes.error || completedRes.error) {
+      console.error('Error fetching stats:', userRes.error || questionRes.error || testimonialRes.error || completedRes.error);
+      return res.status(500).json({ error: 'Failed to fetch stats' });
+    }
+
+    return res.json({
+      users: userRes.count || 0,
+      questions: questionRes.count || 0,
+      testimonials: testimonialRes.count || 0,
+      completed: completedRes.count || 0,
+      requested: pendingTestimonial.count || 0,
+    });
+  } catch (error) {
+    console.error('Stats fetch error:', error);
+    return res.status(500).json({ error: 'Server error while fetching stats' });
+  }
+});
+
+
 
 
 /**
@@ -375,6 +406,21 @@ router.post('/request/:id/cancel', auth, async (req, res) => {
  * Merge all videos for a testimonial
  * POST /api/testimonials/:id/merge
  */
+
+function sanitizeDrawText(text = '') {
+  // First create a safe version for FFmpeg
+  let safeText = text
+    .replace(/\\/g, '')                // Remove backslashes
+    .replace(/'/g, "\u2019")           // Replace single quotes with Unicode right single quotation mark
+    .replace(/"/g, "\u201D")           // Replace double quotes with Unicode right double quotation mark
+    .replace(/:/g, ' -')               // Replace colons with spaces and dashes
+    .replace(/;/g, ' ')                // Replace semicolons with spaces
+    .replace(/\[/g, '(')               // Replace brackets with parentheses
+    .replace(/\]/g, ')');              // Replace brackets with parentheses
+  
+  return safeText;
+}
+
 router.post('/:id/merge', auth, async (req, res) => {
   try {
     console.log(`------ Merging videos for testimonial ${req.params.id} ------`);
@@ -386,7 +432,7 @@ router.post('/:id/merge', auth, async (req, res) => {
       .from('testimonial')
       .select('id, customer_name, customer_position, company_id')
       .eq('id', id)
-      .eq('company_id', company_id)  // Security check - ensure testimonial belongs to user's company
+      .eq('company_id', company_id)
       .single();
 
     if (testimonialError || !testimonial) {
@@ -397,12 +443,7 @@ router.post('/:id/merge', auth, async (req, res) => {
     // 2. Get all testimonial_responses linked to that testimonial
     const { data: responses, error: responsesError } = await supabase
       .from('testimonial_responses')
-      .select(`
-        id,
-        video_url,
-        question_id,
-        question:question_id (id, text)
-      `)
+      .select(`id, video_url, question_id, question:question_id (id, text)`)
       .eq('testimonial_id', id)
       .not('video_url', 'is', null);
 
@@ -417,61 +458,41 @@ router.post('/:id/merge', auth, async (req, res) => {
 
     console.log(`Found ${responses.length} video responses to merge`);
 
-    // 3. Download all videos from Supabase Storage
-      const downloadedVideos = [];
-      for (const response of responses) {
-        if (!response.video_url) continue;
+    const downloadedVideos = [];
+    for (const response of responses) {
+      if (!response.video_url) continue;
 
-        try {
-          const videoUrlPath = new URL(response.video_url).pathname;
-          console.log(videoUrlPath);
-          // Remove the prefix
-          const pathWithoutPrefix = videoUrlPath.replace('/storage/v1/object/public/videos/', '');
-        
-          console.log(`Attempting download from storage path: ${pathWithoutPrefix}`);
-        
-          const { data: fileData, error: downloadError } = await supabase
-            .storage
-            .from('videos')  // ✅ make sure it's the correct bucket name
-            .download(pathWithoutPrefix);
-        
-          if (downloadError || !fileData) {
-            console.error(`Failed to download video ${pathWithoutPrefix}:`, downloadError || 'File not found');
-            continue;  // Skip if failed
-          }
-        
-          console.log(`Successfully downloaded video file: ${pathWithoutPrefix}`);
-        
-          // Save to local filesystem
-          const originalPath = path.join(uploadDir, path.basename(pathWithoutPrefix));
-          fs.writeFileSync(originalPath, Buffer.from(await fileData.arrayBuffer()));
-        
-          // Standard frame size for all videos
-          const frameWidth = 1280;
-          const frameHeight = 720;
-        
-          const mp4Path = originalPath.replace(/\.webm$/, '.mp4');
-          console.log(`Converting ${originalPath} to ${mp4Path} with correct aspect ratio`);
-          
-          // Preserve aspect ratio with padding (letterbox/pillarbox)
-          const ffmpegCommandConvert = `ffmpeg -y -i "${originalPath}" -c:v libx264 -preset ultrafast -c:a aac -b:a 128k -ac 2 -ar 44100 \
-                -vf "scale='if(gt(a,16/9),1280,-2)':'if(gt(a,16/9),-2,720)',pad=1280:720:(ow-iw)/2:(oh-ih)/2" "${mp4Path}"`;
-          await execPromise(ffmpegCommandConvert);
-          console.log(`Successfully converted video to MP4 format with preserved aspect ratio`);
-          
-          // Delete original file
-          fs.unlinkSync(originalPath);
-        
-          downloadedVideos.push({
-            path: mp4Path,  // Use the MP4 file path
-            questionId: response.question_id,
-            questionText: response.question.text
-          });
-        
-        } catch (error) {
-          console.error(`Error processing video from URL ${response.video_url}:`, error);
+      try {
+        const videoUrlPath = new URL(response.video_url).pathname;
+        const pathWithoutPrefix = videoUrlPath.replace('/storage/v1/object/public/videos/', '');
+        const { data: fileData, error: downloadError } = await supabase
+          .storage
+          .from('videos')
+          .download(pathWithoutPrefix);
+
+        if (downloadError || !fileData) {
+          console.error(`Failed to download video ${pathWithoutPrefix}:`, downloadError || 'File not found');
+          continue;
         }
+
+        const originalPath = path.join(uploadDir, path.basename(pathWithoutPrefix));
+        fs.writeFileSync(originalPath, Buffer.from(await fileData.arrayBuffer()));
+
+        const mp4Path = originalPath.replace(/\.webm$/, '.mp4');
+        const ffmpegCommandConvert = `ffmpeg -y -i "${originalPath}" -c:v libx264 -preset ultrafast -c:a aac -b:a 128k -ac 2 -ar 44100 -vf "scale='if(gt(a,16/9),1280,-2)':'if(gt(a,16/9),-2,720)',pad=1280:720:(ow-iw)/2:(oh-ih)/2" "${mp4Path}"`;
+        await execPromise(ffmpegCommandConvert);
+        fs.unlinkSync(originalPath);
+
+        downloadedVideos.push({
+          path: mp4Path,
+          questionId: response.question_id,
+          questionText: response.question.text
+        });
+
+      } catch (error) {
+        console.error(`Error processing video from URL ${response.video_url}:`, error);
       }
+    }
 
     if (downloadedVideos.length === 0) {
       return res.status(400).json({ error: 'Failed to download any videos for processing' });
@@ -479,19 +500,18 @@ router.post('/:id/merge', auth, async (req, res) => {
 
     console.log(`Successfully downloaded ${downloadedVideos.length} videos`);
 
-    // 4. Generate intro video with customer name and position
+    // 4. Create Intro
     const introPath = path.join(uploadDir, `intro_${id}_${Date.now()}.mp4`);
-    const nameText = testimonial.customer_name || '';
-    const positionText = testimonial.customer_position || '';
+    const nameText = sanitizeDrawText(testimonial.customer_name || '');
+    const positionText = sanitizeDrawText(testimonial.customer_position || '');
 
     console.log(`Creating intro with name: "${nameText}", position: "${positionText}"`);
 
     const ffmpegCommandIntro = `ffmpeg -y \
       -f lavfi -i color=c=black:s=1280x720:d=4 \
       -f lavfi -t 4 -i anullsrc=channel_layout=stereo:sample_rate=44100 \
-      -filter_complex "drawtext=text='${nameText}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2-30, \
-      drawtext=text='${positionText}':fontcolor=white:fontsize=32:x=(w-text_w)/2:y=(h-text_h)/2+30, \
-      trim=duration=4,setpts=PTS-STARTPTS[v]; \
+      -filter_complex "[0:v]drawtext=text='${nameText}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2-30, \
+      drawtext=text='${positionText}':fontcolor=white:fontsize=32:x=(w-text_w)/2:y=(h-text_h)/2+30,trim=duration=4,setpts=PTS-STARTPTS[v]; \
       [1:a]atrim=duration=4,asetpts=PTS-STARTPTS[a]" \
       -map "[v]" -map "[a]" \
       -c:v libx264 -preset ultrafast -r 30 -pix_fmt yuv420p \
@@ -501,127 +521,86 @@ router.post('/:id/merge', auth, async (req, res) => {
     await execPromise(ffmpegCommandIntro);
     console.log('Intro video created successfully');
 
-    // 5. Generate videos for questions and prepare for concatenation
-    const segments = [];
-    segments.push(introPath); // Start with intro
+    // 5. Create Question title slides
+    const segments = [introPath];
 
     for (const video of downloadedVideos) {
-      // Create question title video
       const questionPath = path.join(uploadDir, `question_${video.questionId}_${Date.now()}.mp4`);
+      const safeQuestion = sanitizeDrawText(video.questionText);
+      console.log("safe question: " + safeQuestion);
       
       const ffmpegCommandQuestion = `ffmpeg -y \
-        -f lavfi -i color=c=black:s=1280x720:d=3 \
-        -f lavfi -t 3 -i anullsrc=channel_layout=stereo:sample_rate=44100 \
-        -filter_complex "drawtext=text='${video.questionText}':fontcolor=white:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2, \
-        trim=duration=3,setpts=PTS-STARTPTS[v]; \
-        [1:a]atrim=duration=3,asetpts=PTS-STARTPTS[a]" \
-        -map "[v]" -map "[a]" \
-        -c:v libx264 -preset ultrafast -r 30 -pix_fmt yuv420p \
-        -c:a aac -ar 44100 -b:a 128k \
-        -shortest "${questionPath}"`;
+  -f lavfi -i "color=c=black:s=1280x720:d=3" \
+  -f lavfi -t 3 -i "anullsrc=channel_layout=stereo:sample_rate=44100" \
+  -vf "drawtext=text='${safeQuestion}':fontcolor=white:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2:box=1:boxcolor=black@0.5:boxborderw=5, \
+       trim=duration=3,setpts=PTS-STARTPTS" \
+  -af "atrim=duration=3,asetpts=PTS-STARTPTS" \
+  -c:v libx264 -preset ultrafast -r 30 -pix_fmt yuv420p \
+  -c:a aac -ar 44100 -b:a 128k \
+  -shortest "${questionPath}"`;
 
       await execPromise(ffmpegCommandQuestion);
       console.log(`Created question title for: "${video.questionText}"`);
-      
-      // Add question and video to segments
+
       segments.push(questionPath);
       segments.push(video.path);
     }
 
-    // 6. Create concat list and merge videos
+    // 6. Merge videos
     const concatListPath = path.join(uploadDir, `concat_list_${id}_${Date.now()}.txt`);
     const concatListContent = segments.map(file => `file '${file}'`).join('\n');
     fs.writeFileSync(concatListPath, concatListContent);
 
-    console.log(`Created concat list with ${segments.length} segments`);
-
-    // 7. Merge all segments into final video
     const mergedFileName = `testimonial_${id}_${Date.now()}.mp4`;
     const mergedPath = path.join(uploadDir, mergedFileName);
-    
+
     const ffmpegCommandMerge = `ffmpeg -y -f concat -safe 0 -i "${concatListPath}" -c:v libx264 -preset medium -c:a aac -b:a 128k "${mergedPath}"`;
     await execPromise(ffmpegCommandMerge);
-    
+
     console.log('Successfully merged all videos');
 
-    // 8. Upload merged video to Supabase Storage
+    // 7. Upload merged video
     const fileBuffer = fs.readFileSync(mergedPath);
     const { data: uploadData, error: uploadError } = await supabase
       .storage
-      .from("videos")
-      .upload(`merged_testimonials/${mergedFileName}`, fileBuffer, {
-        contentType: "video/mp4",
-        upsert: true,
-      });
+      .from('videos')
+      .upload(`merged_testimonials/${mergedFileName}`, fileBuffer, { contentType: 'video/mp4', upsert: true });
 
     if (uploadError) {
-      console.error("Error uploading merged video:", uploadError);
-      return res.status(500).json({ error: "Failed to upload merged video" });
+      console.error('Error uploading merged video:', uploadError);
+      return res.status(500).json({ error: 'Failed to upload merged video' });
     }
 
-    console.log('Successfully uploaded merged video to Supabase');
-
-    // 9. Get public URL for the merged video
     const { data: publicUrlData } = supabase
       .storage
-      .from("videos")
+      .from('videos')
       .getPublicUrl(`merged_testimonials/${mergedFileName}`);
 
     const mergedVideoUrl = publicUrlData.publicUrl;
 
-    // 10. Save the URL in testimonial.video_url
+    // 8. Update DB
     const { error: updateError } = await supabase
       .from('testimonial')
-      .update({
-        video_url: mergedVideoUrl,
-        updated_at: new Date().toISOString()
-      })
+      .update({ video_url: mergedVideoUrl, updated_at: new Date().toISOString() })
       .eq('id', id);
 
     if (updateError) {
-      console.error('Error updating testimonial with video URL:', updateError);
-      // Continue anyway since we have the URL
-    } else {
-      console.log('Updated testimonial record with merged video URL');
+      console.error('Error updating testimonial:', updateError);
     }
 
-    // 11. Clean up temporary files
-    console.log('Cleaning up temporary files');
-    
-    // Remove intro, question videos and concat list
-    if (fs.existsSync(introPath)) fs.unlinkSync(introPath);
-    if (fs.existsSync(concatListPath)) fs.unlinkSync(concatListPath);
-    
-    // Remove question title videos
-    segments.forEach(segment => {
-      if (segment !== introPath && segment.includes('question_') && fs.existsSync(segment)) {
-        fs.unlinkSync(segment);
-      }
+    // 9. Clean up
+    [introPath, concatListPath, mergedPath, ...segments.filter(f => f.includes('question_')), ...downloadedVideos.map(v => v.path)].forEach(file => {
+      if (fs.existsSync(file)) fs.unlinkSync(file);
     });
-    
-    // Remove downloaded videos
-    downloadedVideos.forEach(video => {
-      if (fs.existsSync(video.path)) fs.unlinkSync(video.path);
-    });
-    
-    // Remove merged video
-    if (fs.existsSync(mergedPath)) fs.unlinkSync(mergedPath);
 
-    // 12. Return the public URL
-    return res.json({ 
-      mergedVideoUrl,
-      message: 'Videos merged successfully',
-      videosIncluded: downloadedVideos.length
-    });
+    return res.json({ mergedVideoUrl, message: 'Videos merged successfully', videosIncluded: downloadedVideos.length });
 
   } catch (error) {
     console.error('Error merging testimonial videos:', error);
-    return res.status(500).json({ 
-      error: 'Server error processing testimonial videos', 
-      message: error.message 
-    });
+    return res.status(500).json({ error: 'Server error processing testimonial videos', message: error.message });
   }
 });
+
 
 router.post('/response/:id/generate-intro', auth, async (req, res) => {
   try {
@@ -726,17 +705,18 @@ router.post('/response/:id/generate-intro', auth, async (req, res) => {
       const questionPath = path.join(uploadDir, `question_${response.question_id}_${Date.now()}.mp4`);
 
       console.log(`Creating question intro with text: "${questionText}"`);
+      const safeQuestion = sanitizeDrawText(questionText);
+      console.log("safe question: " + safeQuestion);
 
       const ffmpegCommandQuestion = `ffmpeg -y \
-        -f lavfi -i color=c=black:s=${frameWidth}x${frameHeight}:d=3 \
-        -f lavfi -t 3 -i anullsrc=channel_layout=stereo:sample_rate=44100 \
-        -filter_complex "drawtext=text='${questionText}':fontcolor=white:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2, \
-        trim=duration=3,setpts=PTS-STARTPTS[v]; \
-        [1:a]atrim=duration=3,asetpts=PTS-STARTPTS[a]" \
-        -map "[v]" -map "[a]" \
-        -c:v libx264 -preset ultrafast -r 30 -pix_fmt yuv420p \
-        -c:a aac -ar 44100 -b:a 128k \
-        -shortest "${questionPath}"`;
+  -f lavfi -i color=c=black:s=${frameWidth}x${frameHeight}:d=3 \
+  -f lavfi -t 3 -i anullsrc=channel_layout=stereo:sample_rate=44100 \
+  -vf "drawtext=text='${safeQuestion}':fontcolor=white:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2:box=1:boxcolor=black@0.5:boxborderw=5, \
+       trim=duration=3,setpts=PTS-STARTPTS" \
+  -af "atrim=duration=3,asetpts=PTS-STARTPTS" \
+  -c:v libx264 -preset ultrafast -r 30 -pix_fmt yuv420p \
+  -c:a aac -ar 44100 -b:a 128k \
+  -shortest "${questionPath}"`;
 
       await execPromise(ffmpegCommandQuestion);
       console.log(`Created question intro for: "${questionText}"`);
